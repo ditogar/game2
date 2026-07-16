@@ -1,0 +1,78 @@
+name: Godot Android Toolchain
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up OpenJDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --sdk_root="${ANDROID_SDK_ROOT}" \
+            "platform-tools" \
+            "build-tools;35.0.1" \
+            "platforms;android-35"
+
+      - name: Download Godot 4.7.1 and Android templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            --output godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip"
+          curl --fail --location --retry 3 \
+            --output templates.tpz \
+            "https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz"
+          unzip -q godot.zip -d godot-unpacked
+          unzip -q templates.tpz -d templates-unpacked
+
+      - name: Assemble minimal toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p toolchain/godot toolchain/templates/4.7.1.stable toolchain/android-sdk/build-tools toolchain/android-sdk/platforms
+          cp godot-unpacked/Godot_v4.7.1-stable_linux.x86_64 toolchain/godot/godot
+          chmod +x toolchain/godot/godot
+          cp templates-unpacked/templates/android_debug.apk toolchain/templates/4.7.1.stable/
+          cp templates-unpacked/templates/android_release.apk toolchain/templates/4.7.1.stable/
+          cp templates-unpacked/templates/version.txt toolchain/templates/4.7.1.stable/
+          cp -R "${ANDROID_SDK_ROOT}/platform-tools" toolchain/android-sdk/
+          cp -R "${ANDROID_SDK_ROOT}/build-tools/35.0.1" toolchain/android-sdk/build-tools/
+          cp -R "${ANDROID_SDK_ROOT}/platforms/android-35" toolchain/android-sdk/platforms/
+          if [[ -d "${ANDROID_SDK_ROOT}/licenses" ]]; then
+            cp -R "${ANDROID_SDK_ROOT}/licenses" toolchain/android-sdk/
+          fi
+          tar -I 'zstd -10 -T0' -cf godot-android-toolchain.tar.zst toolchain
+          sha256sum godot-android-toolchain.tar.zst > godot-android-toolchain.tar.zst.sha256
+          ls -lh godot-android-toolchain.tar.zst
+
+      - name: Upload toolchain artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-android-toolchain-4.7.1
+          path: |
+            godot-android-toolchain.tar.zst
+            godot-android-toolchain.tar.zst.sha256
+          if-no-files-found: error
+          retention-days: 1

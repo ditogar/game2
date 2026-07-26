@@ -36,3 +36,34 @@ jobs:
           path: runtime/
           if-no-files-found: error
           retention-days: 3
+
+      - name: Probe authenticated checkout of private game
+        id: private_checkout
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: ditogar/pokemon
+          path: private-game
+          token: ${{ github.token }}
+          fetch-depth: 1
+
+      - name: Record checkout result
+        shell: bash
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.private_checkout.outcome }}
+        run: |
+          printf 'outcome=%s\n' "$CHECKOUT_OUTCOME" | tee private-checkout-result.txt
+          if [ -d private-game/.git ]; then
+            echo 'private_checkout_available=true' | tee -a private-checkout-result.txt
+            git -C private-game rev-parse HEAD | tee -a private-checkout-result.txt
+          else
+            echo 'private_checkout_available=false' | tee -a private-checkout-result.txt
+          fi
+
+      - name: Upload checkout probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-checkout-probe
+          path: private-checkout-result.txt
+          if-no-files-found: error
+          retention-days: 1

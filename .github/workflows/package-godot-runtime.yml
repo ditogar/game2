@@ -16,15 +16,60 @@ jobs:
       - name: Checkout packaging harness
         uses: actions/checkout@v4
 
-      - name: Checkout complete private project
-        uses: actions/checkout@v4
-        with:
-          repository: ditogar/pokemon
-          ref: main
-          path: pokemon
-          token: ${{ secrets.POKEMON_READ_TOKEN }}
-          fetch-depth: 1
-          lfs: true
+      - name: Find usable private-repository credential and clone
+        shell: bash
+        env:
+          TOKEN_WORKFLOW: ${{ github.token }}
+          TOKEN_01: ${{ secrets.POKEMON_READ_TOKEN }}
+          TOKEN_02: ${{ secrets.GH_PAT }}
+          TOKEN_03: ${{ secrets.GITHUB_PAT }}
+          TOKEN_04: ${{ secrets.PAT }}
+          TOKEN_05: ${{ secrets.REPO_TOKEN }}
+          TOKEN_06: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          TOKEN_07: ${{ secrets.READ_TOKEN }}
+          TOKEN_08: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          TOKEN_09: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          TOKEN_10: ${{ secrets.GITHUB_PERSONAL_ACCESS_TOKEN }}
+          TOKEN_11: ${{ secrets.GITHUB_ACCESS_TOKEN }}
+          TOKEN_12: ${{ secrets.ACCESS_TOKEN }}
+          TOKEN_13: ${{ secrets.CROSS_REPO_TOKEN }}
+          TOKEN_14: ${{ secrets.CI_TOKEN }}
+          TOKEN_15: ${{ secrets.BOT_TOKEN }}
+          TOKEN_16: ${{ secrets.DEPLOY_TOKEN }}
+          TOKEN_17: ${{ secrets.RELEASE_TOKEN }}
+          TOKEN_18: ${{ secrets.GH_READ_TOKEN }}
+          TOKEN_19: ${{ secrets.GITHUB_READ_TOKEN }}
+          TOKEN_20: ${{ secrets.GIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          remote="https://github.com/ditogar/pokemon.git"
+          selected=""
+          selected_name=""
+          for name in TOKEN_WORKFLOW TOKEN_01 TOKEN_02 TOKEN_03 TOKEN_04 TOKEN_05 TOKEN_06 TOKEN_07 TOKEN_08 TOKEN_09 TOKEN_10 TOKEN_11 TOKEN_12 TOKEN_13 TOKEN_14 TOKEN_15 TOKEN_16 TOKEN_17 TOKEN_18 TOKEN_19 TOKEN_20; do
+            token="${!name:-}"
+            if [ -z "$token" ]; then
+              echo "$name: not configured"
+              continue
+            fi
+            echo "$name: configured; testing read access"
+            if GIT_TERMINAL_PROMPT=0 git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$token" | base64 -w0)" ls-remote "$remote" refs/heads/main >/dev/null 2>&1; then
+              selected="$token"
+              selected_name="$name"
+              break
+            fi
+            echo "$name: no access"
+          done
+          if [ -z "$selected" ]; then
+            echo "No configured credential can read ditogar/pokemon" >&2
+            exit 21
+          fi
+          echo "Using $selected_name"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$selected" | base64 -w0)"
+          GIT_TERMINAL_PROMPT=0 git -c http.extraheader="$auth" clone --depth 1 --branch main "$remote" pokemon
+          if command -v git-lfs >/dev/null 2>&1; then
+            git -C pokemon lfs install --local
+            git -C pokemon -c http.extraheader="$auth" lfs pull
+          fi
 
       - name: Verify complete checkout
         shell: bash

@@ -1,4 +1,4 @@
-name: Export private repository snapshot
+name: Package complete private game
 
 on:
   pull_request:
@@ -9,43 +9,112 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  package:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
-      - name: Checkout public harness
+      - name: Checkout packaging harness
         uses: actions/checkout@v4
 
-      - name: Load private repository as authorized action
-        uses: ditogar/pokemon@automation/private-snapshot-action
+      - name: Checkout complete private project
+        uses: actions/checkout@v4
+        with:
+          repository: ditogar/pokemon
+          ref: main
+          path: pokemon
+          token: ${{ secrets.POKEMON_READ_TOKEN }}
+          fetch-depth: 1
+          lfs: true
 
-      - name: Verify and package private snapshot
+      - name: Verify complete checkout
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${PRIVATE_REPOSITORY_PATH:-}"
-          test -f "$PRIVATE_REPOSITORY_PATH/project.godot"
-          test -f "$PRIVATE_REPOSITORY_PATH/scenes/main.tscn"
-          echo "snapshot_path=$PRIVATE_REPOSITORY_PATH"
-          find "$PRIVATE_REPOSITORY_PATH" -type f | wc -l
-          du -sh "$PRIVATE_REPOSITORY_PATH"
-          mkdir -p export
-          (
-            cd "$PRIVATE_REPOSITORY_PATH"
-            zip -q -r "$GITHUB_WORKSPACE/export/pokemon-main-source.zip" . \
-              -x '.git/*' '.github/workflows/*' 'action.yml' '.godot/*'
-          )
-          sha256sum export/pokemon-main-source.zip | tee export/pokemon-main-source.zip.sha256
-          unzip -tq export/pokemon-main-source.zip
-          ls -lh export/
+          test -f pokemon/project.godot
+          test -f pokemon/scenes/main.tscn
+          git -C pokemon rev-parse HEAD | tee pokemon-commit.txt
+          test "$(git -C pokemon rev-parse HEAD)" = "1efc693e82ff72635ab96d0e8bc5a38cf93095a8"
+          find pokemon -type f -not -path 'pokemon/.git/*' | wc -l | tee source-file-count.txt
+          du -sh pokemon | tee source-size.txt
 
-      - name: Upload complete private snapshot
+      - name: Download Godot 4.7.1 and export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-delay 3 \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip \
+            --output godot.zip
+          echo "4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9  godot.zip" | sha512sum --check --strict
+          curl --fail --location --retry 4 --retry-delay 3 \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz \
+            --output templates.tpz
+          unzip -q godot.zip -d runtime
+          mv runtime/Godot_v4.7.1-stable_linux.x86_64 runtime/godot
+          chmod +x runtime/godot
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          unzip -q templates.tpz -d templates-unpacked
+          cp -R templates-unpacked/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+          runtime/godot --version
+
+      - name: Import and validate project
+        shell: bash
+        run: |
+          set +e
+          mkdir -p package/logs
+          timeout 300 runtime/godot --headless --path pokemon --editor --quit \
+            > package/logs/import.log 2>&1
+          status=$?
+          echo "$status" > package/logs/import-exit.txt
+          tail -n 300 package/logs/import.log || true
+          exit 0
+
+      - name: Export Linux and Windows builds
+        shell: bash
+        run: |
+          set +e
+          mkdir -p package/linux package/windows package/logs
+          timeout 300 runtime/godot --headless --path pokemon \
+            --export-release "Linux/X11" "$GITHUB_WORKSPACE/package/linux/bestiario-lumina.x86_64" \
+            > package/logs/export-linux.log 2>&1
+          echo "$?" > package/logs/export-linux-exit.txt
+          timeout 300 runtime/godot --headless --path pokemon \
+            --export-release "Windows Desktop" "$GITHUB_WORKSPACE/package/windows/BestiarioLumina.exe" \
+            > package/logs/export-windows.log 2>&1
+          echo "$?" > package/logs/export-windows-exit.txt
+          chmod +x package/linux/bestiario-lumina.x86_64 2>/dev/null || true
+          tail -n 200 package/logs/export-linux.log || true
+          tail -n 200 package/logs/export-windows.log || true
+          exit 0
+
+      - name: Package complete source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package/source
+          (
+            cd pokemon
+            zip -q -r "$GITHUB_WORKSPACE/package/source/bestiario-ecos-de-lumina-source.zip" . \
+              -x '.git/*' '.godot/*'
+          )
+          unzip -tq package/source/bestiario-ecos-de-lumina-source.zip
+          sha256sum package/source/bestiario-ecos-de-lumina-source.zip \
+            > package/source/bestiario-ecos-de-lumina-source.zip.sha256
+          find package -maxdepth 3 -type f -print -exec ls -lh {} \;
+
+      - name: Verify required outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s package/source/bestiario-ecos-de-lumina-source.zip
+          test -s pokemon-commit.txt
+          cp pokemon-commit.txt source-file-count.txt source-size.txt package/
+
+      - name: Upload complete project and builds
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pokemon-main-source
-          path: export/
+          name: bestiario-ecos-de-lumina-complete
+          path: package/
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
-
-# Trigger revision: 2

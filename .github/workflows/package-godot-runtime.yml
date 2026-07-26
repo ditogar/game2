@@ -1,0 +1,38 @@
+name: Package Godot 4.7.1 runtime
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify Godot
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 4 --retry-delay 3 \
+            https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip \
+            --output godot.zip
+          echo "4ccdab7a48eeccbe8819a2fc1f6262f8d72065d98601bcb3743fcbd7ebd39f373758a788ee3293a05ec5b2c48538266c437404312e372225cd2df273945a2de9  godot.zip" | sha512sum --check --strict
+          unzip -q godot.zip
+          mkdir -p runtime
+          mv Godot_v4.7.1-stable_linux.x86_64 runtime/godot
+          chmod +x runtime/godot
+          runtime/godot --version | tee runtime/VERSION.txt
+
+      - name: Upload runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7.1-linux-x86_64
+          path: runtime/
+          if-no-files-found: error
+          retention-days: 3
